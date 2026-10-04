@@ -128,10 +128,10 @@ def unpack_object(data, offset, objects_by_offset):
     OBJ_REF_DELTA = 7
 
     type_map = {
-        OBJ_COMMIT: b"commit",
-        OBJ_TREE: b"tree",
-        OBJ_BLOB: b"blob",
-        OBJ_TAG: b"tag",
+        OBJ_COMMIT: "commit",
+        OBJ_TREE: "tree",
+        OBJ_BLOB: "blob",
+        OBJ_TAG: "tag",
     }
 
     if obj_type == OBJ_OFS_DELTA:
@@ -143,7 +143,7 @@ def unpack_object(data, offset, objects_by_offset):
             offset += 1
 
         base_offset = start_offset - neg_offset
-        base_data = objects_by_offset[base_offset]
+        base_type, base_data = objects_by_offset[base_offset]
 
         # Decompress delta data
         decompressor = zlib.decompressobj()
@@ -152,6 +152,7 @@ def unpack_object(data, offset, objects_by_offset):
         # Apply delta
         content = apply_delta(base_data, delta_data)
         offset += len(data[offset:]) - len(decompressor.unused_data)
+        obj_type_name = base_type
 
     elif obj_type == OBJ_REF_DELTA:
         # Read base object SHA (20 bytes)
@@ -160,7 +161,7 @@ def unpack_object(data, offset, objects_by_offset):
 
         # Find base object
         base_sha_hex = base_sha.hex()
-        _, base_data = read_object(base_sha_hex)
+        base_type, base_data = read_object(base_sha_hex)
 
         # Decompress delta data
         decompressor = zlib.decompressobj()
@@ -169,34 +170,19 @@ def unpack_object(data, offset, objects_by_offset):
         # Apply delta
         content = apply_delta(base_data, delta_data)
         offset += len(data[offset:]) - len(decompressor.unused_data)
+        obj_type_name = base_type
 
     else:
         # Regular object
         decompressor = zlib.decompressobj()
         content = decompressor.decompress(data[offset:])
         offset += len(data[offset:]) - len(decompressor.unused_data)
+        obj_type_name = type_map[obj_type]
 
     # Store object for delta resolution
-    objects_by_offset[start_offset] = content
+    objects_by_offset[start_offset] = (obj_type_name, content)
 
-    # Write object to disk
-    if obj_type in type_map:
-        obj_type_name = type_map[obj_type]
-    else:
-        # For delta objects, we need to determine type from base
-        # For now, we'll determine it when we have the full content
-        # We'll store temporarily and fix later
-        # Try to determine actual type from content structure
-        if content.startswith(b"tree ") or (
-            b"\x00" in content[:100] and b" " in content[:10]
-        ):
-            obj_type_name = b"tree"
-        elif content.startswith(b"parent ") or content.startswith(b"tree "):
-            obj_type_name = b"commit"
-        else:
-            obj_type_name = b"blob"
-
-    sha1 = hash_object(content, obj_type_name.decode())
+    sha1 = hash_object(content, obj_type_name)
 
     return offset, sha1
 
